@@ -1,0 +1,26 @@
+{
+    "name": "frolaxhq/payment-stripe",
+    "description": "Stripe gateway addon for frolaxhq/laravel-payments",
+    "license": "MIT",
+    "require": {
+        "php": "^8.2",
+        "frolaxhq/laravel-payments": "dev-main"
+    },
+    "autoload": {
+        "psr-4": {
+            "Frolax\\PaymentStripe\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Frolax\\PaymentStripe\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Frolax\\PaymentStripe\\StripeServiceProvider"
+            ]
+        }
+    }
+}
