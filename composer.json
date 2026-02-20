@@ -1,5 +1,5 @@
 {
-    "name": "frolaxhq/payment-stripe",
+    "name": "frolaxhq/laravel-payments-stripe",
     "description": "Stripe gateway addon for frolaxhq/laravel-payments",
     "license": "MIT",
     "require": {
