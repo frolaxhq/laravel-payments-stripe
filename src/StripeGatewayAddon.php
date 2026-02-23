@@ -5,6 +5,12 @@ declare(strict_types=1);
 namespace Frolax\PaymentStripe;
 
 use Frolax\Payment\Contracts\GatewayAddonContract;
+use Frolax\Payment\Contracts\SupportsHostedRedirect;
+use Frolax\Payment\Contracts\SupportsRecurring;
+use Frolax\Payment\Contracts\SupportsRefund;
+use Frolax\Payment\Contracts\SupportsStatusQuery;
+use Frolax\Payment\Contracts\SupportsTokenization;
+use Frolax\Payment\Contracts\SupportsWebhookVerification;
 
 class StripeGatewayAddon implements GatewayAddonContract
 {
@@ -26,17 +32,12 @@ class StripeGatewayAddon implements GatewayAddonContract
     public function capabilities(): array
     {
         return [
-            'redirect',
-            'webhook',
-            'refund',
-            'status_query',
-            'recurring',
-            'tokenization',
-            'payout',
-            'three_d_secure',
-            'wallets',
-            'bank_transfer',
-            'buy_now_pay_later',
+            SupportsHostedRedirect::class,
+            SupportsWebhookVerification::class,
+            SupportsRefund::class,
+            SupportsStatusQuery::class,
+            SupportsRecurring::class,
+            SupportsTokenization::class,
         ];
     }
 

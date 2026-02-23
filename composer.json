@@ -4,7 +4,7 @@
     "license": "MIT",
     "require": {
         "php": "^8.2",
-        "frolaxhq/laravel-payments": "dev-main"
+        "frolaxhq/laravel-payments": "*"
     },
     "autoload": {
         "psr-4": {
@@ -22,5 +22,7 @@
                 "Frolax\\PaymentStripe\\StripeServiceProvider"
             ]
         }
-    }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
 }
