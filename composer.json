@@ -4,7 +4,13 @@
     "license": "MIT",
     "require": {
         "php": "^8.2",
-        "frolaxhq/laravel-payments": "*"
+        "frolaxhq/laravel-payments": "*",
+        "illuminate/http": "^10.0|^11.0|^12.0|^13.0",
+        "illuminate/support": "^10.0|^11.0|^12.0|^13.0"
+    },
+    "require-dev": {
+        "pestphp/pest": "^4.4",
+        "orchestra/testbench": "^10.9"
     },
     "autoload": {
         "psr-4": {
@@ -13,7 +19,12 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Frolax\\PaymentStripe\\Tests\\": "tests/"
+            "Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
         }
     },
     "extra": {
@@ -24,5 +35,11 @@
         }
     },
     "minimum-stability": "dev",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../*"
+        }
+    ]
 }

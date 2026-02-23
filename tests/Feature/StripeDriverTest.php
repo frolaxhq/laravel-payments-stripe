@@ -1,7 +1,11 @@
 <?php
 
-uses(Tests\TestCase::class);
-
+use Frolax\Payment\Contracts\SupportsHostedRedirect;
+use Frolax\Payment\Contracts\SupportsRecurring;
+use Frolax\Payment\Contracts\SupportsRefund;
+use Frolax\Payment\Contracts\SupportsStatusQuery;
+use Frolax\Payment\Contracts\SupportsTokenization;
+use Frolax\Payment\Contracts\SupportsWebhookVerification;
 use Frolax\Payment\DTOs\CanonicalPayload;
 use Frolax\Payment\DTOs\CanonicalRefundPayload;
 use Frolax\Payment\DTOs\CanonicalStatusPayload;
@@ -11,11 +15,13 @@ use Frolax\Payment\DTOs\GatewayResult;
 use Frolax\Payment\DTOs\MoneyDTO;
 use Frolax\Payment\Enums\PaymentStatus;
 use Frolax\PaymentStripe\StripeDriver;
+use Frolax\PaymentStripe\StripeGatewayAddon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 
 beforeEach(function () {
     $this->driver = new StripeDriver;
+    $this->addon = new StripeGatewayAddon;
     $this->credentials = new CredentialsDTO(
         gateway: 'stripe',
         profile: 'test',
@@ -34,9 +40,16 @@ test('stripe driver returns correct name', function () {
 });
 
 test('stripe driver reports all capabilities', function () {
-    expect($this->driver->capabilities())
+    expect($this->addon->capabilities())
         ->toBeArray()
-        ->toContain('redirect', 'webhook', 'refund', 'status_query', 'recurring', 'tokenization', 'payout', 'three_d_secure', 'wallets', 'bank_transfer', 'buy_now_pay_later');
+        ->toEqual([
+            SupportsHostedRedirect::class,
+            SupportsWebhookVerification::class,
+            SupportsRefund::class,
+            SupportsStatusQuery::class,
+            SupportsRecurring::class,
+            SupportsTokenization::class,
+        ]);
 });
 
 // ─── Create Payment ──────────────────────────────────────────────────
@@ -221,12 +234,11 @@ test('stripe driver creates a subscription', function () {
     Http::fake([
         '*/v1/customers' => Http::response(['id' => 'cus_test_123']),
         '*/v1/prices' => Http::response(['id' => 'price_test_456']),
-        '*/v1/subscriptions' => Http::response([
-            'id' => 'sub_test_789',
-            'status' => 'active',
-            'latest_invoice' => [
-                'payment_intent' => ['client_secret' => 'pi_secret_test'],
-            ],
+        '*/v1/checkout/sessions' => Http::response([
+            'id' => 'cs_test_sub123',
+            'object' => 'checkout.session',
+            'url' => 'https://checkout.stripe.com/c/pay/cs_test_sub123',
+            'status' => 'open',
         ]),
     ]);
 
@@ -244,9 +256,11 @@ test('stripe driver creates a subscription', function () {
 
     $result = $this->driver->createSubscription($payload, $this->credentials);
 
-    expect($result->status)->toBe(PaymentStatus::Completed)
-        ->and($result->gatewayReference)->toBe('sub_test_789')
-        ->and($result->metadata['customer_id'])->toBe('cus_test_123');
+    expect($result->status)->toBe(PaymentStatus::Pending)
+        ->and($result->gatewayReference)->toBe('cs_test_sub123')
+        ->and($result->metadata['customer_id'])->toBe('cus_test_123')
+        ->and($result->requiresRedirect())->toBeTrue()
+        ->and($result->redirectUrl)->toStartWith('https://checkout.stripe.com/');
 });
 
 test('stripe driver cancels a subscription', function () {
@@ -351,170 +365,4 @@ test('stripe driver deletes a payment method', function () {
     $result = $this->driver->deleteToken('pm_test_card', $this->credentials);
 
     expect($result->status)->toBe(PaymentStatus::Completed);
-});
-
-// ─── Payout ──────────────────────────────────────────────────────────
-
-test('stripe driver creates a payout', function () {
-    Http::fake([
-        '*/v1/payouts' => Http::response([
-            'id' => 'po_test_abc',
-            'status' => 'paid',
-            'amount' => 10000,
-        ]),
-    ]);
-
-    $result = $this->driver->createPayout([
-        'amount' => 10000,
-        'currency' => 'usd',
-    ], $this->credentials);
-
-    expect($result->status)->toBe(PaymentStatus::Completed)
-        ->and($result->gatewayReference)->toBe('po_test_abc');
-});
-
-test('stripe driver creates a transfer to connected account', function () {
-    Http::fake([
-        '*/v1/transfers' => Http::response([
-            'id' => 'tr_test_xyz',
-            'object' => 'transfer',
-            'amount' => 5000,
-        ]),
-    ]);
-
-    $result = $this->driver->createPayout([
-        'amount' => 5000,
-        'currency' => 'usd',
-        'destination' => 'acct_connected_123',
-    ], $this->credentials);
-
-    expect($result->gatewayReference)->toBe('tr_test_xyz');
-});
-
-// ─── 3D Secure ───────────────────────────────────────────────────────
-
-test('stripe driver initiates 3DS payment', function () {
-    Http::fake([
-        '*/v1/payment_intents' => Http::response([
-            'id' => 'pi_test_3ds',
-            'status' => 'requires_action',
-            'client_secret' => 'pi_test_3ds_secret',
-            'next_action' => [
-                'redirect_to_url' => ['url' => 'https://stripe.com/3ds-redirect'],
-            ],
-        ]),
-    ]);
-
-    $payload = CanonicalPayload::fromArray([
-        'idempotency_key' => '3ds-key',
-        'order' => ['id' => 'ORD-3DS-001'],
-        'money' => ['amount' => 100, 'currency' => 'USD'],
-        'urls' => ['return' => 'https://example.com/return'],
-    ]);
-
-    $result = $this->driver->initiate3DS($payload, $this->credentials);
-
-    expect($result->status)->toBe(PaymentStatus::Processing)
-        ->and($result->redirectUrl)->toBe('https://stripe.com/3ds-redirect')
-        ->and($result->metadata['client_secret'])->toBe('pi_test_3ds_secret');
-});
-
-// ─── Wallets ─────────────────────────────────────────────────────────
-
-test('stripe driver creates a wallet charge session', function () {
-    Http::fake([
-        '*/v1/checkout/sessions' => Http::response([
-            'id' => 'cs_test_wallet',
-            'url' => 'https://checkout.stripe.com/c/pay/cs_test_wallet',
-            'status' => 'open',
-        ]),
-    ]);
-
-    $payload = CanonicalPayload::fromArray([
-        'idempotency_key' => 'wallet-key',
-        'order' => ['id' => 'ORD-WALLET-001', 'description' => 'Wallet Payment'],
-        'money' => ['amount' => 50, 'currency' => 'USD'],
-        'urls' => ['return' => 'https://example.com/return', 'cancel' => 'https://example.com/cancel'],
-        'extra' => ['wallet_types' => ['card', 'apple_pay', 'google_pay']],
-    ]);
-
-    $result = $this->driver->createWalletCharge($payload, $this->credentials);
-
-    expect($result->status)->toBe(PaymentStatus::Pending)
-        ->and($result->gatewayReference)->toBe('cs_test_wallet')
-        ->and($result->redirectUrl)->toStartWith('https://checkout.stripe.com/');
-});
-
-// ─── Bank Transfer ───────────────────────────────────────────────────
-
-test('stripe driver initiates a bank transfer', function () {
-    Http::fake([
-        '*/v1/customers' => Http::response(['id' => 'cus_test_bt']),
-        '*/v1/payment_intents' => Http::response([
-            'id' => 'pi_test_bt',
-            'status' => 'requires_action',
-            'next_action' => [
-                'display_bank_transfer_instructions' => [
-                    'type' => 'us_bank_transfer',
-                    'reference' => 'REF123',
-                ],
-            ],
-        ]),
-    ]);
-
-    $payload = CanonicalPayload::fromArray([
-        'idempotency_key' => 'bt-key',
-        'order' => ['id' => 'ORD-BT-001'],
-        'money' => ['amount' => 200, 'currency' => 'USD'],
-        'customer' => ['email' => 'john@example.com'],
-    ]);
-
-    $result = $this->driver->initiateBankTransfer($payload, $this->credentials);
-
-    expect($result->status)->toBe(PaymentStatus::Processing)
-        ->and($result->gatewayReference)->toBe('pi_test_bt')
-        ->and($result->metadata['bank_instructions'])->not->toBeNull();
-});
-
-// ─── Buy Now Pay Later ──────────────────────────────────────────────
-
-test('stripe driver creates a BNPL session', function () {
-    Http::fake([
-        '*/v1/checkout/sessions' => Http::response([
-            'id' => 'cs_test_bnpl',
-            'url' => 'https://checkout.stripe.com/c/pay/cs_test_bnpl',
-            'status' => 'open',
-        ]),
-    ]);
-
-    $payload = CanonicalPayload::fromArray([
-        'idempotency_key' => 'bnpl-key',
-        'order' => ['id' => 'ORD-BNPL-001', 'description' => 'BNPL Order'],
-        'money' => ['amount' => 150, 'currency' => 'USD'],
-        'urls' => ['return' => 'https://example.com/return', 'cancel' => 'https://example.com/cancel'],
-        'extra' => ['bnpl_types' => ['klarna', 'afterpay_clearpay']],
-    ]);
-
-    $result = $this->driver->createBNPLSession($payload, $this->credentials);
-
-    expect($result->status)->toBe(PaymentStatus::Pending)
-        ->and($result->gatewayReference)->toBe('cs_test_bnpl')
-        ->and($result->redirectUrl)->toStartWith('https://checkout.stripe.com/');
-});
-
-test('stripe driver returns available BNPL plans', function () {
-    $payload = CanonicalPayload::fromArray([
-        'idempotency_key' => 'plans-key',
-        'order' => ['id' => 'ORD-PLANS'],
-        'money' => ['amount' => 100, 'currency' => 'USD'],
-    ]);
-
-    $plans = $this->driver->getBNPLPlans($payload, $this->credentials);
-
-    expect($plans)->toBeArray()
-        ->and(count($plans))->toBeGreaterThanOrEqual(1);
-
-    $ids = array_column($plans, 'id');
-    expect($ids)->toContain('klarna');
-    expect($ids)->toContain('afterpay_clearpay');
 });
