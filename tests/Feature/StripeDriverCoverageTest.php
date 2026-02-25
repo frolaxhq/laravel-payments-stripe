@@ -1,11 +1,11 @@
 <?php
 
-use Frolax\Payment\DTOs\CanonicalRefundPayload;
-use Frolax\Payment\DTOs\CanonicalStatusPayload;
-use Frolax\Payment\DTOs\CanonicalSubscriptionPayload;
-use Frolax\Payment\DTOs\CredentialsDTO;
-use Frolax\Payment\DTOs\GatewayResult;
-use Frolax\Payment\DTOs\MoneyDTO;
+use Frolax\Payment\Data\SubscriptionPayload;
+use Frolax\Payment\Data\Credentials;
+use Frolax\Payment\Data\GatewayResult;
+use Frolax\Payment\Data\Money;
+use Frolax\Payment\Data\RefundPayload;
+use Frolax\Payment\Data\StatusPayload;
 use Frolax\Payment\Enums\PaymentStatus;
 use Frolax\PaymentStripe\StripeDriver;
 use Frolax\PaymentStripe\StripeGatewayAddon;
@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Http;
 beforeEach(function () {
     $this->driver = new StripeDriver;
     $this->addon = new StripeGatewayAddon;
-    $this->credentials = new CredentialsDTO(
+    $this->credentials = new Credentials(
         gateway: 'stripe',
         profile: 'test',
         credentials: [
@@ -116,7 +116,7 @@ test('stripe driver supports status query for plain session', function () {
         ]),
     ]);
 
-    $payload = new CanonicalStatusPayload(
+    $payload = new StatusPayload(
         paymentId: 'internal-id',
         gatewayReference: 'cs_test_abc123',
     );
@@ -228,7 +228,7 @@ test('stripe driver status handles session without payment intent', function () 
         ]),
     ]);
 
-    $payload = new CanonicalStatusPayload(
+    $payload = new StatusPayload(
         paymentId: 'internal-id',
         gatewayReference: 'cs_test_abc123',
     );
@@ -255,7 +255,7 @@ test('stripe driver refund handles various statuses', function () {
             ->push(['id' => 're_3', 'status' => 'unknown']),
     ]);
 
-    $payload = new CanonicalRefundPayload('pi_123', new MoneyDTO(10, 'USD'));
+    $payload = new RefundPayload('pi_123', new Money(10, 'USD'));
 
     $res1 = $this->driver->refund($payload, $this->credentials);
     expect($res1->status)->toBe(PaymentStatus::Processing);
@@ -278,7 +278,7 @@ test('stripe driver handles webhook with different event type', function () {
 test('stripe driver webhook verify returns false on empty header signature list', function () {
     // Tests line 160: empty parts array loop
     $request = Request::create('/webhook', 'POST', [], [], [], [
-        'HTTP_STRIPE_SIGNATURE' => "t=123", // Valid enough format to split by =, but no v1
+        'HTTP_STRIPE_SIGNATURE' => 't=123', // Valid enough format to split by =, but no v1
         'CONTENT_TYPE' => 'application/json',
     ], 'payload');
 
@@ -297,7 +297,7 @@ test('stripe driver createSubscription handles coupon code', function () {
         ]),
     ]);
 
-    $payload = CanonicalSubscriptionPayload::fromArray([
+    $payload = SubscriptionPayload::fromArray([
         'plan' => [
             'id' => 'plan_pro',
             'name' => 'Pro Plan',

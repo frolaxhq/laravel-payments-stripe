@@ -5,29 +5,32 @@ declare(strict_types=1);
 namespace Frolax\PaymentStripe;
 
 use Frolax\Payment\Contracts\GatewayDriverContract;
+use Frolax\Payment\Contracts\SupportsBillingPortal;
 use Frolax\Payment\Contracts\SupportsHostedRedirect;
 use Frolax\Payment\Contracts\SupportsRecurring;
 use Frolax\Payment\Contracts\SupportsRefund;
 use Frolax\Payment\Contracts\SupportsStatusQuery;
 use Frolax\Payment\Contracts\SupportsTokenization;
 use Frolax\Payment\Contracts\SupportsWebhookVerification;
-use Frolax\Payment\DTOs\CanonicalPayload;
-use Frolax\Payment\DTOs\CanonicalRefundPayload;
-use Frolax\Payment\DTOs\CanonicalStatusPayload;
-use Frolax\Payment\DTOs\CanonicalSubscriptionPayload;
-use Frolax\Payment\DTOs\CredentialsDTO;
-use Frolax\Payment\DTOs\GatewayResult;
+use Frolax\Payment\Data\Money;
+use Frolax\Payment\Data\SubscriptionPayload;
+use Frolax\Payment\Data\Credentials;
+use Frolax\Payment\Data\GatewayResult;
+use Frolax\Payment\Data\Payload;
+use Frolax\Payment\Data\RefundPayload;
+use Frolax\Payment\Data\StatusPayload;
+use Frolax\Payment\Data\WebhookData;
 use Frolax\Payment\Enums\PaymentStatus;
+use Frolax\Payment\Enums\SubscriptionStatus;
+use Frolax\Payment\Enums\WebhookEventType;
 use Illuminate\Http\Request;
 
-class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, SupportsRecurring, SupportsRefund, SupportsStatusQuery, SupportsTokenization, SupportsWebhookVerification
+class StripeDriver implements GatewayDriverContract, SupportsBillingPortal, SupportsHostedRedirect, SupportsRecurring, SupportsRefund, SupportsStatusQuery, SupportsTokenization, SupportsWebhookVerification
 {
-    protected ?CredentialsDTO $credentials = null;
+    protected ?Credentials $credentials = null;
 
     /**
      * Get the name of the gateway.
-     *
-     * @return string
      */
     public function name(): string
     {
@@ -37,10 +40,9 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
     /**
      * Set the credentials to be used.
      *
-     * @param CredentialsDTO $credentials
      * @return StripeDriver
      */
-    public function setCredentials(CredentialsDTO $credentials): static
+    public function setCredentials(Credentials $credentials): static
     {
         $this->credentials = $credentials;
 
@@ -49,12 +51,8 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
 
     /**
      * Create a payment using Stripe Checkout Sessions.
-     *
-     * @param CanonicalPayload $payload
-     * @param CredentialsDTO $credentials
-     * @return GatewayResult
      */
-    public function create(CanonicalPayload $payload, CredentialsDTO $credentials): GatewayResult
+    public function create(Payload $payload, Credentials $credentials): GatewayResult
     {
         $client = $this->makeClient($credentials);
 
@@ -100,12 +98,8 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
     /**
      * Verify a payment from a Stripe callback/return.
      * Retrieves the Checkout Session and its PaymentIntent to determine status.
-     *
-     * @param Request $request
-     * @param CredentialsDTO $credentials
-     * @return GatewayResult
      */
-    public function verify(Request $request, CredentialsDTO $credentials): GatewayResult
+    public function verify(Request $request, Credentials $credentials): GatewayResult
     {
         $sessionId = $request->query('session_id');
 
@@ -117,14 +111,12 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
         }
 
         $client = $this->makeClient($credentials);
+
         return $this->retrieveSessionOrPaymentIntent($client, $sessionId);
     }
 
     /**
      * Get the redirect URL for hosted redirect payments.
-     *
-     * @param GatewayResult $result
-     * @return string|null
      */
     public function getRedirectUrl(GatewayResult $result): ?string
     {
@@ -135,11 +127,8 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
      * Verify Stripe webhook signature using HMAC-SHA256.
      *
      * @see https://stripe.com/docs/webhooks/signatures
-     * @param Request $request
-     * @param CredentialsDTO $credentials
-     * @return bool
      */
-    public function verifyWebhookSignature(Request $request, CredentialsDTO $credentials): bool
+    public function verifyWebhookSignature(Request $request, Credentials $credentials): bool
     {
         $signature = $request->header('Stripe-Signature');
         $payload = $request->getContent();
@@ -176,9 +165,6 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
 
     /**
      * Parse the webhook event type from a request.
-     *
-     * @param Request $request
-     * @return string|null
      */
     public function parseWebhookEventType(Request $request): ?string
     {
@@ -187,9 +173,6 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
 
     /**
      * Parse the gateway reference from a webhook request.
-     *
-     * @param Request $request
-     * @return string|null
      */
     public function parseWebhookGatewayReference(Request $request): ?string
     {
@@ -205,13 +188,143 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
     }
 
     /**
-     * Process a refund for a specific payment.
-     *
-     * @param CanonicalRefundPayload $payload
-     * @param CredentialsDTO $credentials
-     * @return GatewayResult
+     * Parse the webhook request into a canonical WebhookData DTO.
      */
-    public function refund(CanonicalRefundPayload $payload, CredentialsDTO $credentials): GatewayResult
+    public function parseWebhookData(Request $request): WebhookData
+    {
+        $type = $request->json('type');
+        $object = $request->json('data.object') ?? [];
+
+        $canonicalEvent = match ($type) {
+            'payment_intent.succeeded' => WebhookEventType::PaymentCompleted,
+            'payment_intent.payment_failed' => WebhookEventType::PaymentFailed,
+            'payment_intent.created', 'payment_intent.processing' => WebhookEventType::PaymentPending,
+            'checkout.session.completed' => WebhookEventType::PaymentCompleted,
+            'checkout.session.expired' => WebhookEventType::PaymentExpired,
+            'charge.refunded' => WebhookEventType::PaymentRefunded,
+            'customer.subscription.created' => WebhookEventType::SubscriptionCreated,
+            'customer.subscription.updated' => $this->mapStripeSubscriptionUpdate($object),
+            'customer.subscription.deleted' => WebhookEventType::SubscriptionCancelled,
+            'customer.subscription.paused' => WebhookEventType::SubscriptionPaused,
+            'customer.subscription.resumed' => WebhookEventType::SubscriptionResumed,
+            'customer.subscription.trial_will_end' => WebhookEventType::SubscriptionTrialEnding,
+            'invoice.paid' => WebhookEventType::InvoicePaid,
+            'invoice.payment_failed' => WebhookEventType::InvoiceFailed,
+            'charge.dispute.created' => WebhookEventType::DisputeCreated,
+            default => WebhookEventType::Unknown,
+        };
+
+        // Extract amount from object
+        $amount = null;
+        if (isset($object['amount'])) {
+            $currency = strtoupper($object['currency'] ?? 'USD');
+            $amount = new Money(
+                amount: $this->fromStripeAmount((int) $object['amount'], $currency),
+                currency: $currency,
+            );
+        } elseif (isset($object['amount_total'])) {
+            $currency = strtoupper($object['currency'] ?? 'USD');
+            $amount = new Money(
+                amount: $this->fromStripeAmount((int) $object['amount_total'], $currency),
+                currency: $currency,
+            );
+        }
+
+        // Map subscription status if applicable
+        $subscriptionStatus = null;
+        if (isset($object['status']) && str_starts_with($type ?? '', 'customer.subscription.')) {
+            $subscriptionStatus = match ($object['status']) {
+                'active' => SubscriptionStatus::Active,
+                'trialing' => SubscriptionStatus::Trialing,
+                'past_due' => SubscriptionStatus::PastDue,
+                'paused' => SubscriptionStatus::Paused,
+                'canceled', 'cancelled' => SubscriptionStatus::Cancelled,
+                'incomplete' => SubscriptionStatus::Incomplete,
+                'incomplete_expired' => SubscriptionStatus::Expired,
+                default => null,
+            };
+        }
+
+        return new WebhookData(
+            canonicalEvent: $canonicalEvent,
+            gateway: 'stripe',
+            gatewayEventType: $type,
+            gatewayReference: $object['id'] ?? null,
+            paymentId: $object['payment_intent'] ?? (str_starts_with($object['id'] ?? '', 'pi_') ? $object['id'] : null),
+            subscriptionId: str_starts_with($object['id'] ?? '', 'sub_') ? $object['id'] : ($object['subscription'] ?? null),
+            customerId: $object['customer'] ?? null,
+            invoiceId: str_starts_with($object['id'] ?? '', 'in_') ? $object['id'] : ($object['invoice'] ?? null),
+            refundId: str_starts_with($object['id'] ?? '', 're_') ? $object['id'] : null,
+            amount: $amount,
+            paymentStatus: $canonicalEvent->isPaymentEvent() ? $this->mapPaymentIntentStatus($object['status'] ?? '') : null,
+            subscriptionStatus: $subscriptionStatus,
+            metadata: $object['metadata'] ?? [],
+            rawPayload: $request->all(),
+        );
+    }
+
+    /**
+     * Map a Stripe subscription update event to a canonical event type.
+     */
+    protected function mapStripeSubscriptionUpdate(array $object): WebhookEventType
+    {
+        return match ($object['status'] ?? '') {
+            'active' => WebhookEventType::SubscriptionActivated,
+            'canceled' => WebhookEventType::SubscriptionCancelled,
+            'paused' => WebhookEventType::SubscriptionPaused,
+            default => WebhookEventType::SubscriptionActivated,
+        };
+    }
+
+    /**
+     * Convert from Stripe's smallest currency unit back to decimal.
+     */
+    protected function fromStripeAmount(int $amount, string $currency): float
+    {
+        $zeroDecimalCurrencies = [
+            'BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA',
+            'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF',
+        ];
+
+        if (in_array(strtoupper($currency), $zeroDecimalCurrencies)) {
+            return (float) $amount;
+        }
+
+        return $amount / 100;
+    }
+
+    /**
+     * Create a billing portal session for a customer.
+     */
+    public function createBillingPortalSession(
+        string $customerId,
+        Credentials $credentials,
+        ?string $returnUrl = null,
+    ): GatewayResult {
+        $client = $this->makeClient($credentials);
+
+        $params = [
+            'customer' => $customerId,
+        ];
+
+        if ($returnUrl) {
+            $params['return_url'] = $returnUrl;
+        }
+
+        $session = $client->createBillingPortalSession($params);
+
+        return new GatewayResult(
+            status: PaymentStatus::Completed,
+            gatewayReference: $session['id'] ?? null,
+            redirectUrl: $session['url'] ?? null,
+            gatewayResponse: $session,
+        );
+    }
+
+    /**
+     * Process a refund for a specific payment.
+     */
+    public function refund(RefundPayload $payload, Credentials $credentials): GatewayResult
     {
         $client = $this->makeClient($credentials);
 
@@ -243,12 +356,8 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
 
     /**
      * Query the status of a specific payment.
-     *
-     * @param CanonicalStatusPayload $payload
-     * @param CredentialsDTO $credentials
-     * @return GatewayResult
      */
-    public function status(CanonicalStatusPayload $payload, CredentialsDTO $credentials): GatewayResult
+    public function status(StatusPayload $payload, Credentials $credentials): GatewayResult
     {
         $client = $this->makeClient($credentials);
 
@@ -270,11 +379,8 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
 
     /**
      * Create a new subscription for a customer.
-     * @param CanonicalSubscriptionPayload $payload
-     * @param CredentialsDTO $credentials
-     * @return GatewayResult
      */
-    public function createSubscription(CanonicalSubscriptionPayload $payload, CredentialsDTO $credentials): GatewayResult
+    public function createSubscription(SubscriptionPayload $payload, Credentials $credentials): GatewayResult
     {
         $client = $this->makeClient($credentials);
 
@@ -314,12 +420,12 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
             'success_url' => $payload->urls?->return ?? url('/dashboard'),
             'cancel_url' => $payload->urls?->cancel ?? url('/pricing'),
             'metadata' => [
-                'plan_id' => $payload->plan->id,
+                'plan_id' => $payload->plan->priceId,
                 'idempotency_key' => $payload->idempotencyKey,
             ],
             'subscription_data' => [
                 'metadata' => [
-                    'plan_id' => $payload->plan->id,
+                    'plan_id' => $payload->plan->priceId,
                     'idempotency_key' => $payload->idempotencyKey,
                 ],
             ],
@@ -349,7 +455,7 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
     /**
      * Cancel an active subscription.
      */
-    public function cancelSubscription(string $subscriptionId, CredentialsDTO $credentials): GatewayResult
+    public function cancelSubscription(string $subscriptionId, Credentials $credentials): GatewayResult
     {
         $client = $this->makeClient($credentials);
         $subscription = $client->cancelSubscription($subscriptionId);
@@ -364,7 +470,7 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
     /**
      * Pause an active subscription collection.
      */
-    public function pauseSubscription(string $subscriptionId, CredentialsDTO $credentials): GatewayResult
+    public function pauseSubscription(string $subscriptionId, Credentials $credentials): GatewayResult
     {
         $client = $this->makeClient($credentials);
         $subscription = $client->updateSubscription($subscriptionId, [
@@ -382,7 +488,7 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
     /**
      * Resume a paused subscription.
      */
-    public function resumeSubscription(string $subscriptionId, CredentialsDTO $credentials): GatewayResult
+    public function resumeSubscription(string $subscriptionId, Credentials $credentials): GatewayResult
     {
         $client = $this->makeClient($credentials);
         $subscription = $client->updateSubscription($subscriptionId, [
@@ -400,7 +506,7 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
     /**
      * Update an active subscription's properties.
      */
-    public function updateSubscription(string $subscriptionId, array $changes, CredentialsDTO $credentials): GatewayResult
+    public function updateSubscription(string $subscriptionId, array $changes, Credentials $credentials): GatewayResult
     {
         $client = $this->makeClient($credentials);
         $subscription = $client->updateSubscription($subscriptionId, $changes);
@@ -415,7 +521,7 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
     /**
      * Retrieve the current status of a subscription.
      */
-    public function getSubscriptionStatus(string $subscriptionId, CredentialsDTO $credentials): GatewayResult
+    public function getSubscriptionStatus(string $subscriptionId, Credentials $credentials): GatewayResult
     {
         $client = $this->makeClient($credentials);
         $subscription = $client->retrieveSubscription($subscriptionId);
@@ -430,7 +536,7 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
     /**
      * Tokenize a payment method for off-session usage via a SetupIntent.
      */
-    public function tokenize(CanonicalPayload $payload, CredentialsDTO $credentials): GatewayResult
+    public function tokenize(Payload $payload, Credentials $credentials): GatewayResult
     {
         $client = $this->makeClient($credentials);
 
@@ -464,13 +570,8 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
 
     /**
      * Charge a previously tokenized payment method.
-     *
-     * @param string $token
-     * @param CanonicalPayload $payload
-     * @param CredentialsDTO $credentials
-     * @return GatewayResult
      */
-    public function chargeToken(string $token, CanonicalPayload $payload, CredentialsDTO $credentials): GatewayResult
+    public function chargeToken(string $token, Payload $payload, Credentials $credentials): GatewayResult
     {
         $client = $this->makeClient($credentials);
 
@@ -502,12 +603,8 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
 
     /**
      * Remove a saved payment method token.
-     *
-     * @param string $token
-     * @param CredentialsDTO $credentials
-     * @return GatewayResult
      */
-    public function deleteToken(string $token, CredentialsDTO $credentials): GatewayResult
+    public function deleteToken(string $token, Credentials $credentials): GatewayResult
     {
         $client = $this->makeClient($credentials);
         $result = $client->detachPaymentMethod($token);
@@ -521,12 +618,8 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
 
     /**
      * List all payment methods saved for a specific customer.
-     *
-     * @param string $customerId
-     * @param CredentialsDTO $credentials
-     * @return array
      */
-    public function listTokens(string $customerId, CredentialsDTO $credentials): array
+    public function listTokens(string $customerId, Credentials $credentials): array
     {
         $client = $this->makeClient($credentials);
 
@@ -535,21 +628,14 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
 
     /**
      * Create a new StripeClient instance.
-     *
-     * @param CredentialsDTO $credentials
-     * @return StripeClient
      */
-    protected function makeClient(CredentialsDTO $credentials): StripeClient
+    protected function makeClient(Credentials $credentials): StripeClient
     {
         return new StripeClient($credentials);
     }
 
     /**
      * Convert a decimal amount to Stripe's smallest currency unit (e.g. cents).
-     *
-     * @param float|int $amount
-     * @param string $currency
-     * @return int
      */
     protected function toStripeAmount(float|int $amount, string $currency): int
     {
@@ -567,9 +653,6 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
 
     /**
      * Map a Stripe PaymentIntent status to our internal PaymentStatus enum.
-     *
-     * @param string $status
-     * @return PaymentStatus
      */
     protected function mapPaymentIntentStatus(string $status): PaymentStatus
     {
@@ -584,9 +667,6 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
 
     /**
      * Map a Stripe Checkout Session status to our internal PaymentStatus enum.
-     *
-     * @param string $status
-     * @return PaymentStatus
      */
     protected function mapSessionStatus(string $status): PaymentStatus
     {
@@ -600,9 +680,6 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
 
     /**
      * Map a Stripe Subscription status to our internal PaymentStatus enum.
-     *
-     * @param string $status
-     * @return PaymentStatus
      */
     protected function mapSubscriptionStatus(string $status): PaymentStatus
     {
@@ -618,9 +695,6 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
 
     /**
      * Map Stripe interval to internal interval.
-     *
-     * @param string $interval
-     * @return string
      */
     protected function mapInterval(string $interval): string
     {
@@ -636,10 +710,6 @@ class StripeDriver implements GatewayDriverContract, SupportsHostedRedirect, Sup
     /**
      * Retrieve a Stripe Session and map it to a GatewayResult.
      * Extracts nested PaymentIntent status if available.
-     *
-     * @param StripeClient $client
-     * @param array|string $sessionId
-     * @return GatewayResult
      */
     protected function retrieveSessionOrPaymentIntent(StripeClient $client, array|string $sessionId): GatewayResult
     {

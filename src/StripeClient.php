@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Frolax\PaymentStripe;
 
-use Frolax\Payment\DTOs\CredentialsDTO;
+use Frolax\Payment\Data\Credentials;
 use Frolax\Payment\Exceptions\GatewayRequestFailedException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
@@ -18,7 +18,7 @@ class StripeClient
     protected string $apiVersion;
 
     public function __construct(
-        protected CredentialsDTO $credentials,
+        protected Credentials $credentials,
     ) {
         $this->baseUrl = config('payments.gateways.stripe.base_url', 'https://api.stripe.com');
         $this->secretKey = $credentials->get('secret_key', '');
@@ -132,6 +132,13 @@ class StripeClient
     public function createTransfer(array $params): array
     {
         return $this->post('/v1/transfers', $params);
+    }
+
+    // ─── Billing Portal ─────────────────────────────────────────────
+
+    public function createBillingPortalSession(array $params): array
+    {
+        return $this->post('/v1/billing_portal/sessions', $params);
     }
 
     // ─── Products & Prices (for Subscriptions) ───────────────────────

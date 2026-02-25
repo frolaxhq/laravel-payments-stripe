@@ -6,13 +6,13 @@ use Frolax\Payment\Contracts\SupportsRefund;
 use Frolax\Payment\Contracts\SupportsStatusQuery;
 use Frolax\Payment\Contracts\SupportsTokenization;
 use Frolax\Payment\Contracts\SupportsWebhookVerification;
-use Frolax\Payment\DTOs\CanonicalPayload;
-use Frolax\Payment\DTOs\CanonicalRefundPayload;
-use Frolax\Payment\DTOs\CanonicalStatusPayload;
-use Frolax\Payment\DTOs\CanonicalSubscriptionPayload;
-use Frolax\Payment\DTOs\CredentialsDTO;
-use Frolax\Payment\DTOs\GatewayResult;
-use Frolax\Payment\DTOs\MoneyDTO;
+use Frolax\Payment\Data\SubscriptionPayload;
+use Frolax\Payment\Data\Credentials;
+use Frolax\Payment\Data\GatewayResult;
+use Frolax\Payment\Data\Money;
+use Frolax\Payment\Data\Payload;
+use Frolax\Payment\Data\RefundPayload;
+use Frolax\Payment\Data\StatusPayload;
 use Frolax\Payment\Enums\PaymentStatus;
 use Frolax\PaymentStripe\StripeDriver;
 use Frolax\PaymentStripe\StripeGatewayAddon;
@@ -22,7 +22,7 @@ use Illuminate\Support\Facades\Http;
 beforeEach(function () {
     $this->driver = new StripeDriver;
     $this->addon = new StripeGatewayAddon;
-    $this->credentials = new CredentialsDTO(
+    $this->credentials = new Credentials(
         gateway: 'stripe',
         profile: 'test',
         credentials: [
@@ -65,7 +65,7 @@ test('stripe driver creates a checkout session and returns redirect url', functi
         ]),
     ]);
 
-    $payload = CanonicalPayload::fromArray([
+    $payload = Payload::fromArray([
         'idempotency_key' => 'test-key-001',
         'order' => ['id' => 'ORD-123', 'description' => 'Premium Plan'],
         'money' => ['amount' => 29.99, 'currency' => 'USD'],
@@ -132,9 +132,9 @@ test('stripe driver can process a refund', function () {
         ]),
     ]);
 
-    $payload = new CanonicalRefundPayload(
+    $payload = new RefundPayload(
         paymentId: 'pi_test_def456',
-        money: new MoneyDTO(29.99, 'USD'),
+        money: new Money(29.99, 'USD'),
         reason: 'Customer requested refund',
     );
 
@@ -155,7 +155,7 @@ test('stripe driver can query payment intent status', function () {
         ]),
     ]);
 
-    $payload = new CanonicalStatusPayload(
+    $payload = new StatusPayload(
         paymentId: 'internal-id',
         gatewayReference: 'pi_test_def456',
     );
@@ -179,7 +179,7 @@ test('stripe driver can query checkout session status', function () {
         ]),
     ]);
 
-    $payload = new CanonicalStatusPayload(
+    $payload = new StatusPayload(
         paymentId: 'internal-id',
         gatewayReference: 'cs_test_abc123',
     );
@@ -242,7 +242,7 @@ test('stripe driver creates a subscription', function () {
         ]),
     ]);
 
-    $payload = CanonicalSubscriptionPayload::fromArray([
+    $payload = SubscriptionPayload::fromArray([
         'plan' => [
             'id' => 'plan_pro',
             'name' => 'Pro Plan',
@@ -318,7 +318,7 @@ test('stripe driver creates a setup intent for tokenization', function () {
         ]),
     ]);
 
-    $payload = CanonicalPayload::fromArray([
+    $payload = Payload::fromArray([
         'idempotency_key' => 'token-key-001',
         'order' => ['id' => 'ORD-TOKEN-001'],
         'money' => ['amount' => 0, 'currency' => 'USD'],
@@ -341,7 +341,7 @@ test('stripe driver charges a saved token', function () {
         ]),
     ]);
 
-    $payload = CanonicalPayload::fromArray([
+    $payload = Payload::fromArray([
         'idempotency_key' => 'charge-key-001',
         'order' => ['id' => 'ORD-CHARGE-001'],
         'money' => ['amount' => 15.00, 'currency' => 'USD'],

@@ -1,12 +1,12 @@
 <?php
 
-use Frolax\Payment\DTOs\CredentialsDTO;
+use Frolax\Payment\Data\Credentials;
 use Frolax\Payment\Exceptions\GatewayRequestFailedException;
 use Frolax\PaymentStripe\StripeClient;
 use Illuminate\Support\Facades\Http;
 
 beforeEach(function () {
-    $this->credentials = new CredentialsDTO(
+    $this->credentials = new Credentials(
         gateway: 'stripe',
         profile: 'test',
         credentials: [

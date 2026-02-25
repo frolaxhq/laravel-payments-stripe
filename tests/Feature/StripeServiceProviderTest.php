@@ -6,8 +6,10 @@ use Frolax\PaymentStripe\StripeServiceProvider;
 test('service provider returns correct gateway addon instance', function () {
     // The constructor is protected on ServiceProvider, create a mock or extend it
     $app = app();
-    $provider = new class($app) extends StripeServiceProvider {
-        public function getAddon() {
+    $provider = new class($app) extends StripeServiceProvider
+    {
+        public function getAddon()
+        {
             return $this->gatewayAddon();
         }
     };

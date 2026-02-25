@@ -1,13 +1,13 @@
 <?php
 
-use Frolax\PaymentStripe\StripeDriver;
-use Frolax\PaymentStripe\StripeGatewayAddon;
 use Frolax\Payment\Contracts\SupportsHostedRedirect;
 use Frolax\Payment\Contracts\SupportsRecurring;
 use Frolax\Payment\Contracts\SupportsRefund;
 use Frolax\Payment\Contracts\SupportsStatusQuery;
 use Frolax\Payment\Contracts\SupportsTokenization;
 use Frolax\Payment\Contracts\SupportsWebhookVerification;
+use Frolax\PaymentStripe\StripeDriver;
+use Frolax\PaymentStripe\StripeGatewayAddon;
 
 test('addon returns correct gateway key', function () {
     $addon = new StripeGatewayAddon;
